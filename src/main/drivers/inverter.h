@@ -17,13 +17,12 @@
 
 #pragma once
 
-#ifdef INVERTER
-#define INVERTER_OFF digitalLo(INVERTER_GPIO, INVERTER_PIN)
-#define INVERTER_ON digitalHi(INVERTER_GPIO, INVERTER_PIN)
-#else
-#define INVERTER_OFF do {} while(0)
-#define INVERTER_ON do {} while(0)
+#if defined(INVERTER_PIN_UART1) || defined(INVERTER_PIN_UART2) || defined(INVERTER_PIN_UART3) || defined(INVERTER_PIN_UART4) || defined(INVERTER_PIN_UART5) || defined(INVERTER_PIN_UART6)
+#define USE_INVERTER
 #endif
 
-void initInverter(void);
+#include "drivers/serial.h"
 
+void initInverters(const serialPinConfig_t *serialPinConfigToUse);
+
+void enableInverter(USART_TypeDef *USARTx, bool on);

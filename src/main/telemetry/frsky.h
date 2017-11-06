@@ -15,21 +15,21 @@
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "rx/rx.h"
+#pragma once
 
-#ifndef TELEMETRY_FRSKY_H_
-#define TELEMETRY_FRSKY_H_
+#include "common/time.h"
 
 typedef enum {
     FRSKY_VFAS_PRECISION_LOW = 0,
     FRSKY_VFAS_PRECISION_HIGH
 } frskyVFasPrecision_e;
 
-void handleFrSkyTelemetry(rxConfig_t *rxConfig, uint16_t deadband3d_throttle);
+typedef void frSkyTelemetryInitFrameFn(void);
+typedef void frSkyTelemetryWriteFn(uint8_t ch);
+
+void handleFrSkyTelemetry(timeUs_t currentTimeUs);
 void checkFrSkyTelemetryState(void);
+void initFrSkyTelemetry(void);
 
-void initFrSkyTelemetry(telemetryConfig_t *telemetryConfig);
-void configureFrSkyTelemetryPort(void);
-void freeFrSkyTelemetryPort(void);
-
-#endif /* TELEMETRY_FRSKY_H_ */
+void initFrSkyExternalTelemetry(frSkyTelemetryInitFrameFn *frSkyTelemetryInitFrameExternal, frSkyTelemetryWriteFn *frSkyTelemetryWriteExternal);
+void deinitFrSkyExternalTelemetry(void);

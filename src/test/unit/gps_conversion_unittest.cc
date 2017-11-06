@@ -22,7 +22,7 @@
 //#ifdef DEBUG_GPS_CONVERSION
 
 extern "C" {
-    #include "flight/gps_conversion.h"
+    #include "common/gps_conversion.h"
 }
 
 #include "unittest_macros.h"
@@ -72,4 +72,3 @@ TEST(GpsConversionTest, GPSCoordToDegrees_NMEA_Values)
         EXPECT_EQ(result, expectation->degrees);
     }
 }
-

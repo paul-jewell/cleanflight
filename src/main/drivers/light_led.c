@@ -15,27 +15,76 @@
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-initLeds(void)
-{
-    struct {
-        GPIO_TypeDef *gpio;
-        gpio_config_t cfg;
-    } gpio_setup[] = {
-#ifdef LED0
-        {
-            .gpio = LED0_GPIO,
-            .cfg = { LED0_PIN, Mode_Out_PP, Speed_2MHz }
-        },
-#endif
-#ifdef LED1
+#include "platform.h"
 
-        {
-            .gpio = LED1_GPIO,
-            .cfg = { LED1_PIN, Mode_Out_PP, Speed_2MHz }
-        },
+#include "config/parameter_group_ids.h"
+
+#include "drivers/io.h"
+#include "io_impl.h"
+
+#include "light_led.h"
+
+PG_REGISTER_WITH_RESET_FN(statusLedConfig_t, statusLedConfig, PG_STATUS_LED_CONFIG, 0);
+
+static IO_t leds[STATUS_LED_NUMBER];
+static uint8_t ledInversion = 0;
+
+#ifndef LED0_PIN
+#define LED0_PIN NONE
 #endif
+
+#ifndef LED1_PIN
+#define LED1_PIN NONE
+#endif
+
+#ifndef LED2_PIN
+#define LED2_PIN NONE
+#endif
+
+void pgResetFn_statusLedConfig(statusLedConfig_t *statusLedConfig)
+{
+    statusLedConfig->ioTags[0] = IO_TAG(LED0_PIN);
+    statusLedConfig->ioTags[1] = IO_TAG(LED1_PIN);
+    statusLedConfig->ioTags[2] = IO_TAG(LED2_PIN);
+
+    statusLedConfig->inversion = 0
+#ifdef LED0_INVERTED
+    | BIT(0)
+#endif
+#ifdef LED1_INVERTED
+    | BIT(1)
+#endif
+#ifdef LED2_INVERTED
+    | BIT(2)
+#endif
+    ;
+}
+
+void ledInit(const statusLedConfig_t *statusLedConfig)
+{
+    ledInversion = statusLedConfig->inversion;
+    for (int i = 0; i < STATUS_LED_NUMBER; i++) {
+        if (statusLedConfig->ioTags[i]) {
+            leds[i] = IOGetByTag(statusLedConfig->ioTags[i]);
+            IOInit(leds[i], OWNER_LED, RESOURCE_INDEX(i));
+            IOConfigGPIO(leds[i], IOCFG_OUT_PP);
+        } else {
+            leds[i] = IO_NONE;
+        }
     }
 
-    uint8_t gpio_count = sizeof(gpio_setup) / sizeof(gpio_setup[0]);
+    LED0_OFF;
+    LED1_OFF;
+    LED2_OFF;
+}
 
+void ledToggle(int led)
+{
+    IOToggle(leds[led]);
+}
+
+void ledSet(int led, bool on)
+{
+    const bool inverted = (1 << (led)) & ledInversion;
+    IOWrite(leds[led], on ? inverted : !inverted);
 }

@@ -15,62 +15,17 @@
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
 
 #include "platform.h"
 
-#include "build_config.h"
-
-#include "gpio.h"
 #include "light_led.h"
 #include "sound_beeper.h"
-#include "nvic.h"
+#include "drivers/nvic.h"
+#include "build/atomic.h"
 
-#include "system.h"
-
-
-#ifndef EXTI15_10_CALLBACK_HANDLER_COUNT
-#define EXTI15_10_CALLBACK_HANDLER_COUNT 1
-#endif
-
-static extiCallbackHandler* exti15_10_handlers[EXTI15_10_CALLBACK_HANDLER_COUNT];
-
-void registerExti15_10_CallbackHandler(extiCallbackHandler *fn)
-{
-    for (int index = 0; index < EXTI15_10_CALLBACK_HANDLER_COUNT; index++) {
-        extiCallbackHandler *candidate = exti15_10_handlers[index];
-        if (!candidate) {
-            exti15_10_handlers[index] = fn;
-            return;
-        }
-    }
-    failureMode(15); // EXTI15_10_CALLBACK_HANDLER_COUNT is too low for the amount of handlers required.
-}
-
-void unregisterExti15_10_CallbackHandler(extiCallbackHandler *fn)
-{
-    for (int index = 0; index < EXTI15_10_CALLBACK_HANDLER_COUNT; index++) {
-        extiCallbackHandler *candidate = exti15_10_handlers[index];
-        if (candidate == fn) {
-            exti15_10_handlers[index] = 0;
-            return;
-        }
-    }
-}
-
-void EXTI15_10_IRQHandler(void)
-{
-    for (int index = 0; index < EXTI15_10_CALLBACK_HANDLER_COUNT; index++) {
-        extiCallbackHandler *fn = exti15_10_handlers[index];
-        if (!fn) {
-            continue;
-        }
-        fn();
-    }
-}
+#include "drivers/system.h"
 
 // cycles per microsecond
 static uint32_t usTicks = 0;
@@ -79,27 +34,83 @@ static volatile uint32_t sysTickUptime = 0;
 // cached value of RCC->CSR
 uint32_t cachedRccCsrValue;
 
-static void cycleCounterInit(void)
+void cycleCounterInit(void)
 {
+#if defined(USE_HAL_DRIVER)
+    usTicks = HAL_RCC_GetSysClockFreq() / 1000000;
+#else
     RCC_ClocksTypeDef clocks;
     RCC_GetClocksFreq(&clocks);
     usTicks = clocks.SYSCLK_Frequency / 1000000;
+#endif
 }
 
 // SysTick
+
+static volatile int sysTickPending = 0;
+
 void SysTick_Handler(void)
 {
-    sysTickUptime++;
+    ATOMIC_BLOCK(NVIC_PRIO_MAX) {
+        sysTickUptime++;
+        sysTickPending = 0;
+        (void)(SysTick->CTRL);
+    }
+#ifdef USE_HAL_DRIVER
+    // used by the HAL for some timekeeping and timeouts, should always be 1ms
+    HAL_IncTick();
+#endif
 }
 
 // Return system uptime in microseconds (rollover in 70minutes)
+
+uint32_t microsISR(void)
+{
+    register uint32_t ms, pending, cycle_cnt;
+
+    ATOMIC_BLOCK(NVIC_PRIO_MAX) {
+        cycle_cnt = SysTick->VAL;
+
+        if (SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk) {
+            // Update pending.
+            // Record it for multiple calls within the same rollover period
+            // (Will be cleared when serviced).
+            // Note that multiple rollovers are not considered.
+
+            sysTickPending = 1;
+
+            // Read VAL again to ensure the value is read after the rollover.
+
+            cycle_cnt = SysTick->VAL;
+        }
+
+        ms = sysTickUptime;
+        pending = sysTickPending;
+    }
+
+    return ((ms + pending) * 1000) + (usTicks * 1000 - cycle_cnt) / usTicks;
+}
+
 uint32_t micros(void)
 {
     register uint32_t ms, cycle_cnt;
+
+    // Call microsISR() in interrupt and elevated (non-zero) BASEPRI context
+
+    if ((SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) || (__get_BASEPRI())) {
+        return microsISR();
+    }
+
     do {
         ms = sysTickUptime;
         cycle_cnt = SysTick->VAL;
+        /*
+         * If the SysTick timer expired during the previous instruction, we need to give it a little time for that
+         * interrupt to be delivered before we can recheck sysTickUptime:
+         */
+        asm volatile("\tnop\n");
     } while (ms != sysTickUptime);
+
     return (ms * 1000) + (usTicks * 1000 - cycle_cnt) / usTicks;
 }
 
@@ -107,45 +118,6 @@ uint32_t micros(void)
 uint32_t millis(void)
 {
     return sysTickUptime;
-}
-
-void systemInit(void)
-{
-#ifdef CC3D
-    /* Accounts for OP Bootloader, set the Vector Table base address as specified in .ld file */
-    extern void *isr_vector_table_base;
-
-    NVIC_SetVectorTable((uint32_t)&isr_vector_table_base, 0x0);
-#endif
-    // Configure NVIC preempt/priority groups
-    NVIC_PriorityGroupConfig(NVIC_PRIORITY_GROUPING);
-
-#ifdef STM32F10X
-    // Turn on clocks for stuff we use
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
-#endif
-
-    // cache RCC->CSR value to use it in isMPUSoftreset() and others
-    cachedRccCsrValue = RCC->CSR;
-    RCC_ClearFlag();
-
-
-    enableGPIOPowerUsageAndNoiseReductions();
-
-
-#ifdef STM32F10X
-    // Turn off JTAG port 'cause we're using the GPIO for leds
-#define AFIO_MAPR_SWJ_CFG_NO_JTAG_SW            (0x2 << 24)
-    AFIO->MAPR |= AFIO_MAPR_SWJ_CFG_NO_JTAG_SW;
-#endif
-
-    // Init cycle counter
-    cycleCounterInit();
-
-
-    memset(&exti15_10_handlers, 0x00, sizeof(exti15_10_handlers));
-    // SysTick
-    SysTick_Config(SystemCoreClock / 1000);
 }
 
 #if 1
@@ -188,21 +160,50 @@ void delay(uint32_t ms)
         delayMicroseconds(1000);
 }
 
-// FIXME replace mode with an enum so usage can be tracked, currently mode is a magic number
-void failureMode(uint8_t mode)
+#define SHORT_FLASH_DURATION 50
+#define SHORT_FLASH_COUNT 5
+#define CODE_FLASH_DURATION 250
+
+static void indicate(uint8_t count, uint16_t duration)
 {
-    uint8_t flashesRemaining = 10;
+    if (count) {
+        LED1_ON;
+        LED0_OFF;
 
-    LED1_ON;
-    LED0_OFF;
-    while (flashesRemaining--) {
-        LED1_TOGGLE;
-        LED0_TOGGLE;
-        delay(475 * mode - 2);
-        BEEP_ON;
-        delay(25);
-        BEEP_OFF;
+        while (count--) {
+            LED1_TOGGLE;
+            LED0_TOGGLE;
+            BEEP_ON;
+            delay(duration);
+
+            LED1_TOGGLE;
+            LED0_TOGGLE;
+            BEEP_OFF;
+            delay(duration);
+        }
     }
+}
 
+void indicateFailure(failureMode_e mode, int codeRepeatsRemaining)
+{
+    while (codeRepeatsRemaining--) {
+        indicate(SHORT_FLASH_COUNT, SHORT_FLASH_DURATION);
+
+        delay(500);
+
+        indicate(mode + 1, CODE_FLASH_DURATION);
+
+        delay(1000);
+    }
+}
+
+void failureMode(failureMode_e mode)
+{
+    indicateFailure(mode, 10);
+
+#ifdef DEBUG
+    systemReset();
+#else
     systemResetToBootloader();
+#endif
 }

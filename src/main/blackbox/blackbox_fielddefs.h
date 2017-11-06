@@ -17,8 +17,6 @@
 
 #pragma once
 
-#include <stdint.h>
-
 typedef enum FlightLogFieldCondition {
     FLIGHT_LOG_FIELD_CONDITION_ALWAYS = 0,
     FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_1,
@@ -43,6 +41,9 @@ typedef enum FlightLogFieldCondition {
     FLIGHT_LOG_FIELD_CONDITION_NONZERO_PID_D_2,
 
     FLIGHT_LOG_FIELD_CONDITION_NOT_LOGGING_EVERY_FRAME,
+
+    FLIGHT_LOG_FIELD_CONDITION_ACC,
+    FLIGHT_LOG_FIELD_CONDITION_DEBUG,
 
     FLIGHT_LOG_FIELD_CONDITION_NEVER,
 
@@ -82,7 +83,10 @@ typedef enum FlightLogFieldPredictor {
     FLIGHT_LOG_FIELD_PREDICTOR_VBATREF        = 9,
 
     //Predict the last time value written in the main stream
-    FLIGHT_LOG_FIELD_PREDICTOR_LAST_MAIN_FRAME_TIME = 10
+    FLIGHT_LOG_FIELD_PREDICTOR_LAST_MAIN_FRAME_TIME = 10,
+
+    //Predict that this field is the minimum motor output
+    FLIGHT_LOG_FIELD_PREDICTOR_MINMOTOR       = 11
 
 } FlightLogFieldPredictor;
 
@@ -93,7 +97,8 @@ typedef enum FlightLogFieldEncoding {
     FLIGHT_LOG_FIELD_ENCODING_TAG8_8SVB       = 6,
     FLIGHT_LOG_FIELD_ENCODING_TAG2_3S32       = 7,
     FLIGHT_LOG_FIELD_ENCODING_TAG8_4S16       = 8,
-    FLIGHT_LOG_FIELD_ENCODING_NULL            = 9 // Nothing is written to the file, take value to be zero
+    FLIGHT_LOG_FIELD_ENCODING_NULL            = 9, // Nothing is written to the file, take value to be zero
+    FLIGHT_LOG_FIELD_ENCODING_TAG2_3SVARIABLE = 10
 } FlightLogFieldEncoding;
 
 typedef enum FlightLogFieldSign {
@@ -103,61 +108,43 @@ typedef enum FlightLogFieldSign {
 
 typedef enum FlightLogEvent {
     FLIGHT_LOG_EVENT_SYNC_BEEP = 0,
-    FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_START = 10,
-    FLIGHT_LOG_EVENT_AUTOTUNE_CYCLE_RESULT = 11,
-    FLIGHT_LOG_EVENT_AUTOTUNE_TARGETS = 12,
     FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT = 13,
+    FLIGHT_LOG_EVENT_LOGGING_RESUME = 14,
+    FLIGHT_LOG_EVENT_FLIGHTMODE = 30, // Add new event type for flight mode status.
     FLIGHT_LOG_EVENT_LOG_END = 255
 } FlightLogEvent;
 
-typedef struct flightLogEvent_syncBeep_t {
+typedef struct flightLogEvent_syncBeep_s {
     uint32_t time;
 } flightLogEvent_syncBeep_t;
 
-typedef struct flightLogEvent_autotuneCycleStart_t {
-    uint8_t phase;
-    uint8_t cycle;
-    uint8_t p;
-    uint8_t i;
-    uint8_t d;
-    uint8_t rising;
-} flightLogEvent_autotuneCycleStart_t;
+typedef struct flightLogEvent_flightMode_s { // New Event Data type
+    uint32_t flags;
+    uint32_t lastFlags;
+} flightLogEvent_flightMode_t;
 
-#define FLIGHT_LOG_EVENT_AUTOTUNE_FLAG_OVERSHOT 1
-#define FLIGHT_LOG_EVENT_AUTOTUNE_FLAG_TIMEDOUT 2
-#define FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT_FUNCTION_FLOAT_VALUE_FLAG 128
-
-typedef struct flightLogEvent_autotuneCycleResult_t {
-    uint8_t flags;
-    uint8_t p;
-    uint8_t i;
-    uint8_t d;
-} flightLogEvent_autotuneCycleResult_t;
-
-typedef struct flightLogEvent_autotuneTargets_t {
-    uint16_t currentAngle;
-    int8_t targetAngle, targetAngleAtPeak;
-    uint16_t firstPeakAngle, secondPeakAngle;
-} flightLogEvent_autotuneTargets_t;
-
-typedef struct flightLogEvent_inflightAdjustment_t {
-    uint8_t adjustmentFunction;
-    bool floatFlag;
+typedef struct flightLogEvent_inflightAdjustment_s {
     int32_t newValue;
     float newFloatValue;
+    uint8_t adjustmentFunction;
+    bool floatFlag;
 } flightLogEvent_inflightAdjustment_t;
 
-typedef union flightLogEventData_t
-{
+typedef struct flightLogEvent_loggingResume_s {
+    uint32_t logIteration;
+    uint32_t currentTime;
+} flightLogEvent_loggingResume_t;
+
+#define FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT_FUNCTION_FLOAT_VALUE_FLAG 128
+
+typedef union flightLogEventData_u {
     flightLogEvent_syncBeep_t syncBeep;
-    flightLogEvent_autotuneCycleStart_t autotuneCycleStart;
-    flightLogEvent_autotuneCycleResult_t autotuneCycleResult;
-    flightLogEvent_autotuneTargets_t autotuneTargets;
+    flightLogEvent_flightMode_t flightMode; // New event data
     flightLogEvent_inflightAdjustment_t inflightAdjustment;
+    flightLogEvent_loggingResume_t loggingResume;
 } flightLogEventData_t;
 
-typedef struct flightLogEvent_t
-{
+typedef struct flightLogEvent_s {
     FlightLogEvent event;
     flightLogEventData_t data;
 } flightLogEvent_t;

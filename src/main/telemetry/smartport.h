@@ -5,10 +5,12 @@
  *      Author: Frank26080115
  */
 
-#ifndef TELEMETRY_SMARTPORT_H_
-#define TELEMETRY_SMARTPORT_H_
+#pragma once
 
-void initSmartPortTelemetry(telemetryConfig_t *);
+#define SMARTPORT_MSP_TX_BUF_SIZE 256
+#define SMARTPORT_MSP_RX_BUF_SIZE 64
+
+void initSmartPortTelemetry(void);
 
 void handleSmartPortTelemetry(void);
 void checkSmartPortTelemetryState(void);
@@ -16,6 +18,3 @@ void checkSmartPortTelemetryState(void);
 void configureSmartPortTelemetryPort(void);
 void freeSmartPortTelemetryPort(void);
 
-bool isSmartPortTimedOut(void);
-
-#endif /* TELEMETRY_SMARTPORT_H_ */

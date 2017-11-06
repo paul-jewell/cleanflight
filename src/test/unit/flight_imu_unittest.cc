@@ -17,83 +17,207 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-
 #include <limits.h>
+#include <cmath>
 
-#define BARO
+#undef BARO
 
 extern "C" {
-    #include "debug.h"
+    #include "build/debug.h"
 
     #include "common/axis.h"
     #include "common/maths.h"
 
-    #include "sensors/sensors.h"
+    #include "config/feature.h"
+    #include "config/parameter_group_ids.h"
+
+    #include "drivers/accgyro/accgyro.h"
+    #include "drivers/compass/compass.h"
     #include "drivers/sensor.h"
-    #include "drivers/accgyro.h"
-    #include "drivers/compass.h"
-    #include "sensors/gyro.h"
-    #include "sensors/compass.h"
-    #include "sensors/acceleration.h"
-    #include "sensors/barometer.h"
 
-    #include "config/runtime_config.h"
-
-    #include "rx/rx.h"
+    #include "fc/rc_controls.h"
+    #include "fc/rc_modes.h"
+    #include "fc/runtime_config.h"
 
     #include "flight/mixer.h"
     #include "flight/pid.h"
     #include "flight/imu.h"
+
+    #include "io/gps.h"
+
+    #include "rx/rx.h"
+
+    #include "sensors/acceleration.h"
+    #include "sensors/barometer.h"
+    #include "sensors/compass.h"
+    #include "sensors/gyro.h"
+    #include "sensors/sensors.h"
+
+    void imuComputeRotationMatrix(void);
+    void imuUpdateEulerAngles(void);
+
+    extern quaternion q;
+    extern float rMat[3][3];
+
+    PG_REGISTER(rcControlsConfig_t, rcControlsConfig, PG_RC_CONTROLS_CONFIG, 0);
+    PG_REGISTER(barometerConfig_t, barometerConfig, PG_BAROMETER_CONFIG, 0);
+
+    PG_REGISTER_WITH_RESET_TEMPLATE(featureConfig_t, featureConfig, PG_FEATURE_CONFIG, 0);
+
+    PG_RESET_TEMPLATE(featureConfig_t, featureConfig,
+        .enabledFeatures = 0
+    );
 }
 
 #include "unittest_macros.h"
 #include "gtest/gtest.h"
 
-#define DOWNWARDS_THRUST true
-#define UPWARDS_THRUST false
+const float sqrt2over2 = sqrt(2) / 2.0f;
 
-
-TEST(FlightImuTest, TestCalculateHeading)
+TEST(FlightImuTest, TestCalculateRotationMatrix)
 {
-    //TODO: Add test cases using the Z dimension.
-    t_fp_vector north = {.A={1.0f, 0.0f, 0.0f}};
-    EXPECT_EQ(imuCalculateHeading(&north), 0);
+    #define TOL 1e-6
 
-    t_fp_vector east = {.A={0.0f, 1.0f, 0.0f}};
-    EXPECT_EQ(imuCalculateHeading(&east), 90);
+    // No rotation
+    q.w = 1.0f;
+    q.x = 0.0f;
+    q.y = 0.0f;
+    q.z = 0.0f;
 
-    t_fp_vector south = {.A={-1.0f, 0.0f, 0.0f}};
-    EXPECT_EQ(imuCalculateHeading(&south), 180);
+    imuComputeRotationMatrix();
 
-    t_fp_vector west = {.A={0.0f, -1.0f, 0.0f}};
-    EXPECT_EQ(imuCalculateHeading(&west), 270);
+    EXPECT_FLOAT_EQ(1.0f, rMat[0][0]);
+    EXPECT_FLOAT_EQ(0.0f, rMat[0][1]);
+    EXPECT_FLOAT_EQ(0.0f, rMat[0][2]);
+    EXPECT_FLOAT_EQ(0.0f, rMat[1][0]);
+    EXPECT_FLOAT_EQ(1.0f, rMat[1][1]);
+    EXPECT_FLOAT_EQ(0.0f, rMat[1][2]);
+    EXPECT_FLOAT_EQ(0.0f, rMat[2][0]);
+    EXPECT_FLOAT_EQ(0.0f, rMat[2][1]);
+    EXPECT_FLOAT_EQ(1.0f, rMat[2][2]);
 
-    t_fp_vector north_east = {.A={1.0f, 1.0f, 0.0f}};
-    EXPECT_EQ(imuCalculateHeading(&north_east), 45);
+    // 90 degrees around Z axis
+    q.w = sqrt2over2;
+    q.x = 0.0f;
+    q.y = 0.0f;
+    q.z = sqrt2over2;
+
+    imuComputeRotationMatrix();
+
+    EXPECT_NEAR(0.0f, rMat[0][0], TOL);
+    EXPECT_NEAR(-1.0f, rMat[0][1], TOL);
+    EXPECT_NEAR(0.0f, rMat[0][2], TOL);
+    EXPECT_NEAR(1.0f, rMat[1][0], TOL);
+    EXPECT_NEAR(0.0f, rMat[1][1], TOL);
+    EXPECT_NEAR(0.0f, rMat[1][2], TOL);
+    EXPECT_NEAR(0.0f, rMat[2][0], TOL);
+    EXPECT_NEAR(0.0f, rMat[2][1], TOL);
+    EXPECT_NEAR(1.0f, rMat[2][2], TOL);
+
+    // 60 degrees around X axis
+    q.w = 0.866f;
+    q.x = 0.5f;
+    q.y = 0.0f;
+    q.z = 0.0f;
+
+    imuComputeRotationMatrix();
+
+    EXPECT_NEAR(1.0f, rMat[0][0], TOL);
+    EXPECT_NEAR(0.0f, rMat[0][1], TOL);
+    EXPECT_NEAR(0.0f, rMat[0][2], TOL);
+    EXPECT_NEAR(0.0f, rMat[1][0], TOL);
+    EXPECT_NEAR(0.5f, rMat[1][1], TOL);
+    EXPECT_NEAR(-0.866f, rMat[1][2], TOL);
+    EXPECT_NEAR(0.0f, rMat[2][0], TOL);
+    EXPECT_NEAR(0.866f, rMat[2][1], TOL);
+    EXPECT_NEAR(0.5f, rMat[2][2], TOL);
+}
+
+TEST(FlightImuTest, TestUpdateEulerAngles)
+{
+    // No rotation
+    memset(rMat, 0.0, sizeof(float) * 9);
+
+    imuUpdateEulerAngles();
+
+    EXPECT_EQ(0, attitude.values.roll);
+    EXPECT_EQ(0, attitude.values.pitch);
+    EXPECT_EQ(0, attitude.values.yaw);
+
+    // 45 degree yaw
+    memset(rMat, 0.0, sizeof(float) * 9);
+    rMat[0][0] = sqrt2over2;
+    rMat[0][1] = sqrt2over2;
+    rMat[1][0] = -sqrt2over2;
+    rMat[1][1] = sqrt2over2;
+
+    imuUpdateEulerAngles();
+
+    EXPECT_EQ(0, attitude.values.roll);
+    EXPECT_EQ(0, attitude.values.pitch);
+    EXPECT_EQ(450, attitude.values.yaw);
+}
+
+TEST(FlightImuTest, TestSmallAngle)
+{
+    const float r1 = 0.898;
+    const float r2 = 0.438;
+
+    // given
+    imuConfigMutable()->small_angle = 25;
+
+    // and
+    memset(rMat, 0.0, sizeof(float) * 9);
+
+    // when
+    imuUpdateEulerAngles();
+
+    // expect
+    EXPECT_EQ(0, STATE(SMALL_ANGLE));
+
+    // given
+    rMat[0][0] = r1;
+    rMat[0][2] = r2;
+    rMat[2][0] = -r2;
+    rMat[2][2] = r1;
+
+    // when
+    imuUpdateEulerAngles();
+
+    // expect
+    EXPECT_EQ(SMALL_ANGLE, STATE(SMALL_ANGLE));
+
+    // given
+    memset(rMat, 0.0, sizeof(float) * 9);
+
+    // when
+    imuUpdateEulerAngles();
+
+    // expect
+    EXPECT_EQ(0, STATE(SMALL_ANGLE));
 }
 
 // STUBS
 
 extern "C" {
 uint32_t rcModeActivationMask;
-int16_t rcCommand[4];
+float rcCommand[4];
 int16_t rcData[MAX_SUPPORTED_RC_CHANNEL_COUNT];
 
-uint16_t acc_1G;
-int16_t heading;
 gyro_t gyro;
-int16_t magADC[XYZ_AXIS_COUNT];
-int32_t BaroAlt;
+acc_t acc;
+mag_t mag;
+
+gpsSolutionData_t gpsSol;
+
+uint8_t debugMode;
 int16_t debug[DEBUG16_VALUE_COUNT];
 
 uint8_t stateFlags;
 uint16_t flightModeFlags;
 uint8_t armingFlags;
 
-int32_t sonarAlt;
-int16_t accADC[XYZ_AXIS_COUNT];
-int16_t gyroADC[XYZ_AXIS_COUNT];
-
+pidProfile_t *currentPidProfile;
 
 uint16_t enableFlightMode(flightModeFlags_e mask)
 {
@@ -105,18 +229,15 @@ uint16_t disableFlightMode(flightModeFlags_e mask)
     return flightModeFlags &= ~(mask);
 }
 
-void gyroUpdate(void) {};
 bool sensors(uint32_t mask)
 {
     UNUSED(mask);
     return false;
 };
-void updateAccelerationReadings(rollAndPitchTrims_t *rollAndPitchTrims)
-{
-    UNUSED(rollAndPitchTrims);
-}
 
+uint32_t millis(void) { return 0; }
 uint32_t micros(void) { return 0; }
+
 bool isBaroCalibrationComplete(void) { return true; }
 void performBaroCalibrationCycle(void) {}
 int32_t baroCalculateAltitude(void) { return 0; }

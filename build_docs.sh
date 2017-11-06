@@ -3,7 +3,7 @@
 filename=Manual
 doc_files=(
 	'Introduction.md'
-  'Getting Started.md'
+	'Getting Started.md'
 	'Safety.md'
 	'Installation.md'
 	'Configuration.md'
@@ -28,7 +28,7 @@ doc_files=(
 	'Blackbox.md'
 	'Migrating from baseflight.md'
 	'Boards.md'
-	'Board - AlienWii32.md'
+	'Board - AlienFlight.md'
 	'Board - CC3D.md'
 	'Board - CJMCU.md'
 	'Board - Naze32.md'
@@ -48,7 +48,8 @@ if which gimli >/dev/null; then
 		cat "$i" >> ${filename}.md
 	done
 	rm -f ${filename}.pdf
-	gimli -f ${filename}.md -stylesheet override.css
+	gimli -f ${filename}.md -stylesheet override.css \
+	  -w '--toc --title "Cleanflight Manual" --footer-right "[page]" --toc-depth 1'
 	rm ${filename}.md
 	popd >/dev/null
 else

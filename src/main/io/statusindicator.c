@@ -20,10 +20,8 @@
 
 #include "platform.h"
 
-#include "drivers/system.h"
-#include "drivers/gpio.h"
 #include "drivers/light_led.h"
-#include "drivers/sound_beeper.h"
+#include "drivers/time.h"
 
 #include "statusindicator.h"
 
@@ -85,5 +83,3 @@ void warningLedUpdate(void)
 
     warningLedRefresh();
 }
-
-
